@@ -1,10 +1,20 @@
+# ============================================
+#   Gradient_Boosting.py (Full Working Version)
+# ============================================
+
+import os
+import json
 import pandas as pd
 import numpy as np
+import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
 
-# ML Libraries
+# Add src to import path
+PROJECT_SRC = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(PROJECT_SRC)
+
+# ML libs
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, GradientBoostingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
@@ -13,38 +23,27 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import MinMaxScaler
 
+# Import path utilities
+from utils_path import FILE_HOME, FILE_VALID, FILE_UCI, load_csv
+
 plt.style.use('ggplot')
 pd.options.mode.chained_assignment = None
 
-# ===========================================================
-# 📁 FIND PROJECT ROOT (always E:/ML)
-# ===========================================================
 
+# ===============================================================
+#  FIND PROJECT ROOT (ML/) → result/output + result/figures
+# ===============================================================
 def find_project_root():
-    """
-    ไล่ขึ้นโฟลเดอร์ทีละชั้นจนเจอโฟลเดอร์หลักของโปรเจ็กต์ที่มี cleaned_data / models
-    """
-    current = os.path.abspath(os.path.dirname(__file__))
-
+    current = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     while True:
-        if (
-            os.path.isdir(os.path.join(current, "cleaned_data")) or
-            os.path.isdir(os.path.join(current, "models"))
-        ):
+        if os.path.isdir(os.path.join(current, "data")):
             return current
-
         parent = os.path.dirname(current)
-        if parent == current:  # มาถึง root แล้ว
+        if parent == current:
             return current
-
         current = parent
 
-
 PROJECT_ROOT = find_project_root()
-
-# ===========================================================
-# 📁 CREATE result/output + result/figures
-# ===========================================================
 
 RESULT_DIR = os.path.join(PROJECT_ROOT, "result")
 OUTPUT_DIR = os.path.join(RESULT_DIR, "output")
@@ -53,82 +52,84 @@ FIG_DIR = os.path.join(RESULT_DIR, "figures")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(FIG_DIR, exist_ok=True)
 
-print("📂 Project Root =", PROJECT_ROOT)
-print("📁 Output Folder =", OUTPUT_DIR)
-print("📁 Figures Folder =", FIG_DIR)
+print("Project Root:", PROJECT_ROOT)
+print("Output:", OUTPUT_DIR)
+print("Figures:", FIG_DIR)
 
-# ===========================================================
-# 📌 SAVE FUNCTIONS
-# ===========================================================
 
-def save_text(filename, text):
-    path = os.path.join(OUTPUT_DIR, filename)
+# ===============================================================
+#  SAVE HELPERS
+# ===============================================================
+def save_text(fn, text):
+    path = os.path.join(OUTPUT_DIR, fn)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    print("📁 Saved Text →", path)
+    print("Saved Text →", path)
 
-def save_csv(filename, df):
-    path = os.path.join(OUTPUT_DIR, filename)
-    df.to_csv(path, index=True)
-    print("📁 Saved CSV →", path)
-
-def save_json(filename, data):
-    import json
-    path = os.path.join(OUTPUT_DIR, filename)
+def save_json(fn, data):
+    path = os.path.join(OUTPUT_DIR, fn)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
-    print("📁 Saved JSON →", path)
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    print("Saved JSON →", path)
 
-def save_plot(filename):
-    path = os.path.join(FIG_DIR, filename)
+def save_plot(fn):
+    path = os.path.join(FIG_DIR, fn)
     plt.savefig(path, dpi=300, bbox_inches="tight")
-    print("📁 Saved Plot →", path)
+    plt.close()
+    print("Saved Plot →", path)
 
-# ===========================================================
-# 📦 DATA CONFIGURATION
-# ===========================================================
 
-DATA_FOLDER = 'cleaned_data'
-MODEL_FOLDER = 'models'
-os.makedirs(MODEL_FOLDER, exist_ok=True)
-
-FILE_MAIN = 'cleaned_HomeC.csv'
-FILE_VALID = 'cleaned_Energy_Validation.csv'
-FILE_FORECAST = 'cleaned_UCI_Power.csv'
-
-# ===========================================================
-# 🛠️ ROBUST CSV LOADER
-# ===========================================================
-
-def robust_load_csv(filename):
-    path = os.path.join(DATA_FOLDER, filename)
+# ===============================================================
+#  ROBUST CSV LOADER
+# ===============================================================
+def robust_load_csv(path):
     if not os.path.exists(path):
-        print("❌ File Not Found:", filename)
+        print(f"❌ File not found: {path}")
         return None
 
     try:
-        df = pd.read_csv(path, index_col=0, parse_dates=True, low_memory=False)
-        if df.shape[1] <= 1:
-            df = pd.read_csv(path, sep=";", index_col=0, parse_dates=True)
-        return df
+        df = pd.read_csv(path)
     except Exception as e:
-        print("❌ Error:", e)
+        print("CSV error:", e)
         return None
 
-# ===========================================================
-# 🏠 PART 1 — MAIN SMART HOME ML ANALYSIS
-# ===========================================================
+    df.columns = (
+        df.columns.str.strip()
+            .str.lower()
+            .str.replace(" ", "_")
+            .str.replace("[^a-z0-9_]", "", regex=True)
+    )
 
-def analyze_smart_home_main(filename):
+    # detect datetime column
+    time_cols = [c for c in df.columns if "time" in c]
+
+    if len(time_cols) > 0:
+        try:
+            df[time_cols[0]] = pd.to_datetime(df[time_cols[0]])
+            df = df.set_index(time_cols[0])
+        except:
+            print("⚠ Cannot parse datetime")
+    else:
+        print("⚠ No datetime column detected")
+
+    return df
+
+
+# ===============================================================
+#  PART 1 — MAIN SMART HOME ANALYSIS
+# ===============================================================
+def analyze_smart_home_main(filepath):
     print("\n" + "="*60)
-    print("🚀 PART 1: Main Smart Home Dataset")
+    print("🚀 PART 1: Main Dataset Analysis")
     print("="*60)
 
-    df = robust_load_csv(filename)
+    df = robust_load_csv(filepath)
     if df is None:
-        return None
+        return
 
-    # 🔥 DEVICE POWER USAGE INSIGHT
+    # --------------------------
+    # Insight: Top energy devices
+    # --------------------------
     exclude = [
         'time', 'use', 'house_overall', 'gen', 'summary', 'icon',
         'temperature', 'humidity', 'visibility', 'pressure', 'windspeed',
@@ -136,7 +137,7 @@ def analyze_smart_home_main(filename):
         'windbearing'
     ]
 
-    device_cols = [c for c in df.columns if c.lower() not in exclude and df[c].dtype in [float, int]]
+    device_cols = [c for c in df.columns if c not in exclude and df[c].dtype in [float, int]]
 
     if device_cols:
         total_usage = df[device_cols].sum().sort_values(ascending=False).head(10)
@@ -146,23 +147,24 @@ def analyze_smart_home_main(filename):
             x=total_usage.values,
             y=total_usage.index,
             hue=total_usage.index,
-            palette="magma",
             dodge=False,
-            legend=False
+            legend=False,
+            palette='magma'
         )
-        plt.title("⚡ Top Energy Consuming Devices")
-        plt.xlabel("Total Usage (kW)")
-
+        plt.title("⚡ Top Energy Devices")
         save_plot("top_energy_devices.png")
-        plt.close()
 
-    # 🔥 ML FEATURE ENGINEERING
-    target_col = next((c for c in ['use', 'House overall', 'mains'] if c in df.columns), df.columns[0])
-    df['hour'] = df.index.hour
-    df['day_of_week'] = df.index.dayofweek
-    df['month'] = df.index.month
+        print("Top device:", total_usage.index[0])
 
-    # Lag features improve prediction
+    # --------------------------
+    # Feature Engineering
+    # --------------------------
+    target_col = next((c for c in ['use', 'house_overall', 'mains'] if c in df.columns), df.columns[0])
+
+    df["hour"] = df.index.hour
+    df["day_of_week"] = df.index.dayofweek
+    df["month"] = df.index.month
+
     for lag in [1, 2, 3, 6, 12, 24]:
         df[f"lag_{lag}h"] = df[target_col].shift(lag)
 
@@ -174,8 +176,12 @@ def analyze_smart_home_main(filename):
     X = df[numeric_cols]
     y = df[target_col]
 
-    # 🔥 REGRESSION MODEL
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # --------------------------
+    # Regression
+    # --------------------------
+    print("\n[ML 1] Regression ...")
 
     reg = RandomForestRegressor(
         n_estimators=300,
@@ -190,16 +196,19 @@ def analyze_smart_home_main(filename):
     r2 = r2_score(y_test, preds)
     mae = mean_absolute_error(y_test, preds)
 
-    print("   R² =", r2)
-    print("   MAE =", mae)
+    print("R2:", r2)
+    print("MAE:", mae)
 
     save_text("regression_metrics.txt", f"R2={r2}\nMAE={mae}")
 
-    feature_imp = pd.Series(reg.feature_importances_, index=X.columns).sort_values(ascending=False).head(10)
-    save_text("regression_feature_importance.txt", feature_imp.to_string())
+    # Feature importance
+    importance = pd.Series(reg.feature_importances_, index=X.columns).sort_values(ascending=False)
+    save_text("regression_feature_importance.txt", importance.head(10).to_string())
 
-    # 🔥 ANOMALY DETECTION
-    print("\n[ML 2] Anomaly Detection")
+    # --------------------------
+    # Classification / Anomaly
+    # --------------------------
+    print("\n[ML 2] Anomaly Detection ...")
 
     limit = df[target_col].quantile(0.9)
     y_class = (df[target_col] > limit).astype(int)
@@ -212,109 +221,137 @@ def analyze_smart_home_main(filename):
         n_estimators=300,
         class_weight="balanced",
         min_samples_leaf=2,
-        random_state=42,
-        n_jobs=-1
+        n_jobs=-1,
+        random_state=42
     )
     clf.fit(X_train_c, y_train_c)
 
-    y_proba = clf.predict_proba(X_test_c)[:, 1]
-    prec, rec, thres = precision_recall_curve(y_test_c, y_proba)
-    f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
-    best_idx = np.argmax(f1_scores)
+    y_prob = clf.predict_proba(X_test_c)[:, 1]
 
+    prec, rec, thres = precision_recall_curve(y_test_c, y_prob)
+    f1 = 2*(prec*rec)/(prec+rec+1e-9)
+    best_idx = np.argmax(f1)
     best_th = thres[best_idx]
-    best_f1 = f1_scores[best_idx]
-    y_pred_c = (y_proba >= best_th).astype(int)
 
+    y_pred_c = (y_prob >= best_th).astype(int)
     acc = accuracy_score(y_test_c, y_pred_c)
 
-    save_text(
-        "classification_metrics.txt",
-        f"Threshold={best_th}\nAccuracy={acc}\nF1={best_f1}"
-    )
+    save_text("classification_metrics.txt", f"Threshold={best_th}\nAccuracy={acc}\nF1={f1[best_idx]}")
 
     cm = confusion_matrix(y_test_c, y_pred_c)
     plt.figure(figsize=(5, 4))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
     plt.title("Confusion Matrix")
-
     save_plot("confusion_matrix.png")
-    plt.close()
 
     return df
 
-# ===========================================================
-# ⚖️ PART 2 — VALIDATION DATASET COMPARISON
-# ===========================================================
 
-def validate_dataset(df_main, filename_valid):
-    df_val = robust_load_csv(filename_valid)
-    if df_val is None:
+# ===============================================================
+#  PART 2 — VALIDATION
+# ===============================================================
+def validate_dataset(df_main, df_val):
+    print("\n" + "="*40)
+    print("🚀 PART 2: Validation Comparison")
+    print("="*40)
+
+    if df_main is None or df_val is None:
+        print("❌ Missing dataset(s). Cannot validate.")
         return
 
-    print("\n" + "="*60)
-    print("🚀 PART 2: Validation Dataset Comparison")
-    print("="*60)
+    # -----------------------------
+    # 1) หา target column ของ Main Dataset
+    # -----------------------------
+    possible_main = ['use', 'house_overall', 'mains']
+    target_main = next((c for c in possible_main if c in df_main.columns), None)
 
-    target_main = next((c for c in ['use', 'House overall'] if c in df_main.columns), df_main.columns[0])
-    target_val = next((c for c in ['mains', 'Energy_Consumption', 'use'] if c in df_val.columns), df_val.columns[0])
+    if target_main is None:
+        target_main = df_main.select_dtypes(include=[np.number]).columns[0]
+        print(f"⚠️ target_main not found. Auto-selected: {target_main}")
 
-    p_main = df_main.groupby(df_main.index.hour)[target_main].mean().values.reshape(-1, 1)
-    p_val = df_val.groupby(df_val.index.hour)[target_val].mean().values.reshape(-1, 1)
+    # -----------------------------
+    # 2) หา target column ของ Validation Dataset
+    # -----------------------------
+    possible_val = ['mains', 'mains_power', 'energy_consumption', 'use']
+    target_val = next((c for c in possible_val if c in df_val.columns), None)
 
+    if target_val is None:
+        target_val = df_val.select_dtypes(include=[np.number]).columns[0]
+        print(f"⚠️ target_val not found. Auto-selected: {target_val}")
+
+    # -----------------------------
+    # 3) ป้องกันปัญหา index ไม่มีเวลา
+    # -----------------------------
+    if not isinstance(df_main.index, pd.DatetimeIndex):
+        print("❌ df_main has no datetime index!")
+        return
+    if not isinstance(df_val.index, pd.DatetimeIndex):
+        print("❌ df_val has no datetime index!")
+        return
+
+    # -----------------------------
+    # 4) คำนวณค่าเฉลี่ยรายชั่วโมง
+    # -----------------------------
+    try:
+        p_main = df_main.groupby(df_main.index.hour)[target_main].mean().values.reshape(-1, 1)
+        p_val = df_val.groupby(df_val.index.hour)[target_val].mean().values.reshape(-1, 1)
+    except Exception as e:
+        print("❌ Error during grouping:", e)
+        print("df_main columns:", df_main.columns)
+        print("df_val columns:", df_val.columns)
+        return
+
+    # -----------------------------
+    # 5) Normalize และ Plot
+    # -----------------------------
     scaler = MinMaxScaler()
-    norm_main = scaler.fit_transform(p_main)
-    norm_val = scaler.fit_transform(p_val)
+    nm = scaler.fit_transform(p_main)
+    nv = scaler.fit_transform(p_val)
 
     plt.figure(figsize=(10, 5))
-    plt.plot(norm_main, label="Main Dataset", marker="o")
-    plt.plot(norm_val, label="Validation Dataset", linestyle="--", marker="x")
+    plt.plot(nm, label="Main", marker="o")
+    plt.plot(nv, label="Validation", linestyle="--", marker="x")
     plt.legend()
     plt.title("Daily Pattern Comparison")
 
     save_plot("validation_pattern_comparison.png")
     plt.close()
 
-# ===========================================================
-# 🔮 PART 3 — FORECASTING MODEL
-# ===========================================================
+    print("✅ Validation comparison saved!")
 
-def forecast_uci_model(filename):
+
+
+# ===============================================================
+#  PART 3 — FORECASTING
+# ===============================================================
+def forecast_uci(df_uci):
     print("\n" + "="*60)
-    print("🚀 PART 3: Time-Series Forecasting")
+    print("🚀 PART 3: Forecasting")
     print("="*60)
 
-    df = robust_load_csv(filename)
-    if df is None:
-        return
+    target_col = next((c for c in df_uci.columns if "global_active" in c.lower()), None)
 
-    target_col = next((c for c in df.columns if "global_active" in c.lower()), None)
-    if not target_col:
-        return
-
-    df_h = df[[target_col]].copy()
-    df_h[target_col] = pd.to_numeric(df_h[target_col], errors='coerce')
-
+    df_h = df_uci[[target_col]].copy()
+    df_h[target_col] = pd.to_numeric(df_h[target_col], errors="coerce")
     df_h = df_h.resample("h").mean().dropna()
     df_h.columns = ["y"]
 
-    for i in [1, 24, 168]:
-        df_h[f"lag_{i}"] = df_h["y"].shift(i)
+    for lag in [1, 24, 168]:
+        df_h[f"lag_{lag}"] = df_h["y"].shift(lag)
 
     df_h.dropna(inplace=True)
 
     X = df_h.drop("y", axis=1)
     y = df_h["y"]
 
-    split_idx = int(len(X) * 0.9)
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    split = int(len(X)*0.9)
+    X_train, X_test = X.iloc[:split], X.iloc[split:]
+    y_train, y_test = y.iloc[:split], y.iloc[split:]
 
-    model = GradientBoostingRegressor(n_estimators=100, max_depth=5)
+    model = GradientBoostingRegressor(n_estimators=100, max_depth=5, random_state=42)
     model.fit(X_train, y_train)
 
     preds = model.predict(X_test)
-
     rmse = np.sqrt(mean_squared_error(y_test, preds))
     mae = mean_absolute_error(y_test, preds)
     r2 = r2_score(y_test, preds)
@@ -322,24 +359,35 @@ def forecast_uci_model(filename):
     save_text("forecast_metrics.txt", f"RMSE={rmse}\nMAE={mae}\nR2={r2}")
 
     plt.figure(figsize=(12, 5))
-    plt.plot(y_test.index[:168], y_test.values[:168], label="Actual")
-    plt.plot(y_test.index[:168], preds[:168], label="Forecast", linestyle="--")
+    L = min(168, len(preds))
+    plt.plot(y_test.index[:L], y_test.values[:L], label="Actual")
+    plt.plot(y_test.index[:L], preds[:L], label="Forecast", linestyle="--")
     plt.legend()
-    plt.title("Forecast: Next 7 Days")
-
     save_plot("forecast_next_7_days.png")
-    plt.close()
 
-# ===========================================================
-# MAIN EXECUTION
-# ===========================================================
+    return {"rmse": rmse, "mae": mae, "r2": r2}
 
+
+# ===============================================================
+#  MAIN EXECUTION
+# ===============================================================
 if __name__ == "__main__":
-    df_main = analyze_smart_home_main(FILE_MAIN)
 
-    if df_main is not None:
-        validate_dataset(df_main, FILE_VALID)
+    # Load datasets
+    df_main = load_csv(FILE_HOME)
+    df_valid = load_csv(FILE_VALID)
+    df_uci = load_csv(FILE_UCI)
 
-    forecast_uci_model(FILE_FORECAST)
+    print("Loaded:", df_main.shape, df_valid.shape, df_uci.shape)
 
-    print("\n🎉 All tasks completed successfully!")
+    # PART 1
+    analyze_smart_home_main(FILE_HOME)
+
+    # PART 2
+    validate_dataset(df_main, df_valid)
+
+    # PART 3
+    metrics = forecast_uci(df_uci)
+
+    save_json("summary.json", {"forecast": metrics})
+    print("\n🎉 All Tasks Completed Successfully!")
